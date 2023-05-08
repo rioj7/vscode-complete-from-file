@@ -1,0 +1,44 @@
+{
+  "name": "complete-from-file",
+  "displayName": "Complete from File",
+  "description": "Suggest completion items from a file",
+  "version": "0.1.0",
+  "publisher": "rioj7",
+  "license": "MIT",
+  "engines": { "vscode": "^1.62.0" },
+  "categories": [ "Other" ],
+  "keywords": ["auto","completion","complete","autocomplete","file","dictionary"],
+  "galleryBanner": {"color": "#000080", "theme": "dark"},
+  "activationEvents": [ "*" ],
+  "main": "./complete-from-file",
+  "contributes": {
+    "configuration": {
+      "title": "Complete from File",
+      "properties": {
+        "complete-from-file.documents": {
+          "type": "object",
+          "default": {},
+          "scope": "resource",
+          "markdownDescription": "Object describing documentSelector and files with completion texts."
+        },
+        "complete-from-file.minimalCharacterCount": {
+          "type": "integer",
+          "default": 3,
+          "scope": "resource",
+          "description": "How many characters to type before a completion suggestion is made."
+        }
+      }
+    }
+  },
+  "homepage": "https://github.com/rioj7/vscode-complete-from-file",
+  "bugs": {
+    "url": "https://github.com/rioj7/vscode-complete-from-file/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rioj7/vscode-complete-from-file.git"
+  },
+  "devDependencies": {
+    "@types/node": "^20.1.0"
+  }
+}
