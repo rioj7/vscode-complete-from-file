@@ -24,14 +24,18 @@ class Trie {
   constructor() {
     this.root = new TrieNode(null);
   }
-  contains(word) {
-    if (word.lenth === 0) { return false; }
+  _findNode(word) {
+    if (word.lenth === 0) { return null; }
     let node = this.root;
     for (let i = 0; i < word.length; i++) {
       node = node.children[word[i]];
-      if (!node) { return false; }
+      if (!node) { return null; }
     }
-    return node.end;
+    return node;
+  }
+  contains(word) {
+    let node = this._findNode(word);
+    return node === null ? false : node.end;
   }
   insert(word) {
     if (word.lenth === 0) { return; }
@@ -48,22 +52,17 @@ class Trie {
     node.end = true;
   }
   find(prefix) {
-    let node = this.root;
     let words = [];
-
-    for(let i = 0; i < prefix.length; i++) {
-      node = node.children[prefix[i]];
-      if (!node) { return words; }
-    }
-    this.findAllWords(node, words);
+    let node = prefix.length === 0 ? this.root : this._findNode(prefix);
+    if (node) { this._findAllWords(node, words); }
     return words;
   }
-  findAllWords(node, words) {
+  _findAllWords(node, words) {
     if (node.end) {
       words.push(node.getWord());
     }
     for (let child in node.children) {
-      this.findAllWords(node.children[child], words);
+      this._findAllWords(node.children[child], words);
     }
   }
 }
