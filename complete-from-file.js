@@ -67,6 +67,33 @@ class Trie {
   }
 }
 
+/** @param {string} pattern  */
+function convertGlobPattern2Regex(pattern) {
+  let regexstr = pattern.replace(/\*\*|\*|\(\?|\?|\{.+?\}|\[!|\./g, m => {
+    if (m === '**') { return '.*'; }
+    if (m === '*') { return '[^/]*'; }
+    if (m === '?') { return '.'; }
+    if (m === '[!') { return '[^'; }
+    if (m === '.') { return '\\.'; }
+    if (m.startsWith('{')) { return `(${m.slice(1, m.length-1).replace(',','|')})`; }
+    return m;
+  });
+  return new RegExp(`^${regexstr}$`);
+}
+
+class TrieFilePatterns {
+  constructor() {
+    this.trie = new Trie();
+    this.filepathRegex = [];
+  }
+  addPattern(pattern) {
+    this.filepathRegex.push(convertGlobPattern2Regex(pattern));
+  }
+  testFilepath(filepath) {
+    return this.filepathRegex.some( regex => regex.test(filepath) );
+  }
+}
+
 function getProperty(obj, prop, deflt) { return obj.hasOwnProperty(prop) ? obj[prop] : deflt; }
 function isString(obj) { return typeof obj === 'string';}
 function errorMessage(msg, noObject) { vscode.window.showErrorMessage(msg); return noObject ? noObject : "Unknown";}
@@ -144,8 +171,9 @@ function activate(context) {
   let completionItemProvider = {
     /** @param {vscode.TextDocument} document @param {vscode.Position} position */
     provideCompletionItems(document, position) {
-      let trie = languageID2Trie[document.languageId];
-      if (!trie) { return undefined; }
+      let tfp = languageID2Trie[document.languageId];
+      if (!tfp) { return undefined; }
+      let trie = tfp.trie;
       const linePrefix = document.lineAt(position).text.substring(0, position.character).trimStart();
       const match = linePrefix.match(/(\w+)$/);
       if (!match) { return undefined; }
@@ -172,55 +200,84 @@ function activate(context) {
     if (!e.affectsConfiguration(configName)) { return; }
     updateConfig();
   }));
-  async function onMatchLanguageID(check_languageID, async_action_file) {
+  const ExitLoop = false;
+  const ContinueLoop = true;
+  async function onMatchLanguageID(check_languageID, collectSelectors, async_action_file) {
     for (const description in documents) {
       if (!documents.hasOwnProperty(description)) { continue; }
       let config = documents[description];
       let selectors = getProperty(config, 'documentSelectors');
       if (!selectors) { continue; }
-      for (const selector of selectors) {
-        let languageIDSelector = getProperty(selector, 'language');
-        if (!languageIDSelector) { continue; }
-        if (!check_languageID(languageIDSelector, selector)) { continue; }
+      let loopSelectors = languageIDMatch => {
+        for (const selector of selectors) {
+          let languageIDSelector = getProperty(selector, 'language');
+          if (!languageIDSelector) { continue; }
+          if (!check_languageID(languageIDSelector, selector)) { continue; }
+          if (languageIDMatch() === ExitLoop) { return; }
+        }
+      };
+      let languageIDMatch = false;
+      loopSelectors( () => { languageIDMatch = true; return ExitLoop; } );
+      if (languageIDMatch) {
+        let resultCollect = collectSelectors();
+        if (resultCollect) {
+          loopSelectors( () => ContinueLoop );
+        }
         for (const filePath of getProperty(config, 'files', [])) {
-          if (!await async_action_file(filePath)) { return; }
+          if ((await async_action_file(filePath)) === ExitLoop) { return; }
+        }
+        if (resultCollect) {  // inside changeActiveTextEditor
+          return; // we have a match. no need to look for other descriptions
         }
       }
     }
   }
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument( async document => {
-    await onMatchLanguageID( () => true,
+    await onMatchLanguageID( () => true, // check_languageID
+      () => false, // collectSelectors
       async filePath => {
         if (document.fileName === variableSubstitution(filePath)) {
           updateConfig();
-          return false;
+          return ExitLoop;
         }
-        return true;
+        return ContinueLoop;
     });
   }));
+  /** @param {vscode.TextEditor} editor */
   async function changeActiveTextEditor(editor) {
     if (!editor) { return; }
     let languageIDEditor = editor.document.languageId;
-    if (languageID2Trie[languageIDEditor] !== undefined) { return; }
+    let tfp = languageID2Trie[languageIDEditor];
+    if (tfp !== undefined) {
+      if (tfp !== null && tfp.testFilepath(editor.document.uri.path)) {
+        return;
+      }
+      delete languageID2Trie[languageIDEditor];
+    }
     await onMatchLanguageID(
       (languageIDSelector, selector) => {
         if (languageIDSelector !== languageIDEditor) { return false; }
+        let tfp = languageID2Trie[languageIDEditor];
+        if (tfp === undefined) { tfp = new TrieFilePatterns(); }
+        tfp.addPattern(getProperty(selector, 'pattern', '**'));  // match all paths if 'pattern' not found
+        return tfp.testFilepath(editor.document.uri.path);
+      },
+      () => { // collectSelectors
         if (!languageIDProviderRegistered.has(languageIDEditor)) {
-          context.subscriptions.push(vscode.languages.registerCompletionItemProvider([selector], completionItemProvider));
+          context.subscriptions.push(vscode.languages.registerCompletionItemProvider({ "language": languageIDEditor, "scheme": "file" }, completionItemProvider));
           languageIDProviderRegistered.add(languageIDEditor);
         }
-        let trie = new Trie();
-        languageID2Trie[languageIDEditor] = trie;
+        languageID2Trie[languageIDEditor] = new TrieFilePatterns();
         return true;
       },
       async (filePath) => {
-        let trie = languageID2Trie[languageIDEditor];
+        let trie = languageID2Trie[languageIDEditor].trie;
         let content = await readFileContent(filePath);
         for (const line of content.split(/\r?\n/)) {
           if (line.match(/^\s*($|\/\/|#)/)) { continue; }  // check empty and comment lines
           trie.insert(line);
         }
-        return true; // process next filePath
+        return ContinueLoop; // process next filePath
       });
     if (languageID2Trie[languageIDEditor] === undefined) {
       languageID2Trie[languageIDEditor] = null;
